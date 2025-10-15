@@ -50,6 +50,8 @@ def visualize_registration_dynamic(
     def update_plot(i):
         ax.cla()  # Clear the previous plot
 
+
+
         # Plot the source point cloud (fixed reference)
         ax.scatter(
             source[:, 0],
@@ -60,6 +62,7 @@ def visualize_registration_dynamic(
             alpha=0.5,
         )
 
+        #old version
         # Apply the current transformation to the sphere
         transformed_sphere = (
             sphere_transforms[i][:3, :3] @ sphere.T
@@ -69,6 +72,21 @@ def visualize_registration_dynamic(
         transformed_cylinder = (
             cylinder_transforms[i][:3, :3] @ cylinder.T
         ).T + cylinder_transforms[i][:3, 3]
+
+
+        # # NEW: clamp indices so we never go out of range
+        # i_s = min(i, len(sphere_transforms) - 1)
+        # i_c = min(i, len(cylinder_transforms) - 1)
+
+        # # Apply the current transformation to the sphere
+        # transformed_sphere = (
+        #     sphere_transforms[i_s][:3, :3] @ sphere.T
+        # ).T + sphere_transforms[i_s][:3, 3]
+
+        # # Apply the current transformation to the cylinder
+        # transformed_cylinder = (
+        #     cylinder_transforms[i_c][:3, :3] @ cylinder.T
+        # ).T + cylinder_transforms[i_c][:3, 3]
 
         # Plot the transformed point clouds
         ax.scatter(
@@ -124,10 +142,14 @@ def compute_centroid(points):
     """
 
     ### YOUR CODE HERE ###
-    dummy_center = np.zeros(3)
+    N = len(points)
+    sum_x = sum(p[0] for p in points)
+    sum_y = sum(p[1] for p in points)
+    sum_z = sum(p[2] for p in points)
+    centroid = [sum_x / N, sum_y / N, sum_z / N]
     ### END OF YOUR CODE ###
 
-    return dummy_center
+    return centroid
 
 
 def generate_random_transformation():
@@ -173,42 +195,57 @@ def icp_point_to_point(source, target, max_iterations=100, tolerance=1e-4):
     tree = KDTree(target)
     source_transformed = source.copy()
     all_transforms = [np.eye(4)]
+    prev_error = np.inf
     for i in range(max_iterations):
         ### YOUR CODE HERE ###
         # Find the nearest neighbors of the source points in the target point cloud. Hint: check tree.query() function
-        distance, indices = np.zeros(source_transformed.shape[0]), np.zeros(source_transformed.shape[0])
+        distances, indices = tree.query(source_transformed, 1)
+        matched_points = target[indices]
 
         # Compute the centroid of the source and target points.
-        source_center = np.zeros(3)
-        target_center = np.zeros(3)
+        source_center = compute_centroid(source_transformed)
+        target_center = compute_centroid(matched_points)
 
         # Demean the source and target points.
-        source_demeaned = np.zeros(source_transformed.shape)
-        target_demeaned = np.zeros(target.shape)
+        source_demeaned = source_transformed - source_center
+        target_demeaned = matched_points - target_center
 
         # Compute the covariance matrix between the source and target points.
-        covariance = np.zeros((3, 3))
+        covariance = source_demeaned.T @ target_demeaned
 
         # Compute the Singular Value Decomposition of the covariance matrix.
-        U, S, Vt = np.zeros((3, 3)), np.zeros(3), np.zeros((3, 3))
+        U, S, Vt = np.linalg.svd(covariance)
 
         # Compute the rotation matrix R.
-        R = np.zeros((3, 3))
+        R = Vt.T @ U.T
+        if np.linalg.det(R) < 0:
+            Vt[-1, :] *= -1
+            R = Vt.T @ U.T
 
         # Compute the translation vector t.
-        t = np.zeros(3)
+        t = target_center - R @ source_center
         
         # Update the source points using the computed rotation matrix and translation vector.
-        source_transformed = np.zeros(source_transformed.shape)
+        source_transformed = (source_transformed @ R.T) + t 
 
         # Compute the transformation matrix
-        transformation_matrix = np.eye(4)
+        T_iter = np.eye(4)
+        T_iter[:3, :3] = R
+        T_iter[:3,  3] = t
+        transformation_matrix = T_iter @ all_transforms[-1]
         
         # Update the transformation matrix list
         all_transforms.append(transformation_matrix)
         
         # Compute the error as the mean of the distances between the source and target points.
-        error = 0
+        error = float(np.mean(distances ** 2))
+        if abs(prev_error - error) < tolerance:
+            break
+        prev_error = error
+
+    target_len = max_iterations + 1  # include initial identity
+    if len(all_transforms) < target_len:
+        all_transforms.extend([all_transforms[-1]] * (target_len - len(all_transforms)))
 
         ### END OF YOUR CODE ###
 
