@@ -168,7 +168,7 @@ def visualize_registration(source, target0, target1):
     scene.show()
 
 
-def icp_point_to_point(source, target, max_iterations=100, tolerance=1e-4):
+def icp_point_to_point(source, target, max_iterations=100, tolerance=1e-10):
     """
     Point-to-Point ICP algorithm.
     Args:
@@ -258,14 +258,36 @@ def main():
         
         transformed_sphere = np.dot(sphere_pc_homo, random_transformation_matrix)[:, :3]
         
-        # Apply Point-to-Point ICP to register the sphere to the lollipop model
+        # # Apply Point-to-Point ICP to register the sphere to the lollipop model
+        # sphere_transformed_ptp, error_sphere_ptp, all_transforms_sphere = (
+        #     icp_point_to_point(transformed_sphere, lollipop_pc)
+        # )
+
+        # # Apply Point-to-Point ICP to register the cylinder to the lollipop model
+        # cylinder_transformed_ptp, error_cylinder_ptp, all_transforms_cylinder = (
+        #     icp_point_to_point(transformed_cylinder, lollipop_pc)
+        # )
+
+        # --- 1) Register the sphere to the full lollipop ---
         sphere_transformed_ptp, error_sphere_ptp, all_transforms_sphere = (
             icp_point_to_point(transformed_sphere, lollipop_pc)
         )
 
-        # Apply Point-to-Point ICP to register the cylinder to the lollipop model
+        # --- 2) Estimate candy center & radius from the aligned sphere ---
+        sphere_center = np.mean(sphere_transformed_ptp, axis=0)
+        # median radius is robust to partial sampling/noise
+        sphere_radius = np.median(np.linalg.norm(sphere_transformed_ptp - sphere_center, axis=1))
+
+        # --- 3) Mask out *all* target points near the candy (keep only stick) ---
+        # pick a small margin relative to the sphere radius (tune 0.03–0.10)
+        margin = 0.2 * sphere_radius
+        dist_to_center = np.linalg.norm(lollipop_pc - sphere_center, axis=1)
+        stick_mask = dist_to_center > (sphere_radius + margin)
+        lollipop_stick = lollipop_pc[stick_mask]
+
+        # --- 4) Register the cylinder ONLY to stick points ---
         cylinder_transformed_ptp, error_cylinder_ptp, all_transforms_cylinder = (
-            icp_point_to_point(transformed_cylinder, lollipop_pc)
+            icp_point_to_point(transformed_cylinder, lollipop_stick)
         )
 
         # Print comparison of results
