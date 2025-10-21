@@ -73,21 +73,6 @@ def visualize_registration_dynamic(
             cylinder_transforms[i][:3, :3] @ cylinder.T
         ).T + cylinder_transforms[i][:3, 3]
 
-
-        # # NEW: clamp indices so we never go out of range
-        # i_s = min(i, len(sphere_transforms) - 1)
-        # i_c = min(i, len(cylinder_transforms) - 1)
-
-        # # Apply the current transformation to the sphere
-        # transformed_sphere = (
-        #     sphere_transforms[i_s][:3, :3] @ sphere.T
-        # ).T + sphere_transforms[i_s][:3, 3]
-
-        # # Apply the current transformation to the cylinder
-        # transformed_cylinder = (
-        #     cylinder_transforms[i_c][:3, :3] @ cylinder.T
-        # ).T + cylinder_transforms[i_c][:3, 3]
-
         # Plot the transformed point clouds
         ax.scatter(
             transformed_sphere[:, 0],
@@ -122,7 +107,10 @@ def visualize_registration_dynamic(
     # Run the update function for each transformation
     # sphere_transforms = sphere.copy()
     # cylinder_transforms = cylinder.copy()
-    for i in range(len(sphere_transforms)):
+
+    #MODIFICATION: use min_transforms instead of just sphere_transforms as otherwise the updateplot runs of out frames for cylinder
+    min_transforms = min(len(sphere_transforms), len(cylinder_transforms))
+    for i in range(min_transforms):
         update_plot(i)
         print(i)
 
@@ -243,9 +231,9 @@ def icp_point_to_point(source, target, max_iterations=100, tolerance=1e-4):
             break
         prev_error = error
 
-    target_len = max_iterations + 1  # include initial identity
-    if len(all_transforms) < target_len:
-        all_transforms.extend([all_transforms[-1]] * (target_len - len(all_transforms)))
+    # target_len = max_iterations + 1  # include initial identity
+    # if len(all_transforms) < target_len:
+    #     all_transforms.extend([all_transforms[-1]] * (target_len - len(all_transforms)))
 
         ### END OF YOUR CODE ###
 
