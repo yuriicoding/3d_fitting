@@ -26,7 +26,11 @@ def determine_sphere_sdf(query_points, sphere_params):
 
     ### Your code here ###
     # Determine the SDF value of each query point with respect to each sphere ###
-    sphere_sdf = torch.zeros(query_points.shape[0], sphere_params.shape[0])
+    # query_points: (N,3); sphere_params: (K,4) as (cx,cy,cz,r)
+    q = query_points.unsqueeze(1)              # (N,1,3)
+    c = sphere_params[:, :3].unsqueeze(0)      # (1,K,3)
+    r = sphere_params[:, 3].unsqueeze(0)       # (1,K)
+    sphere_sdf = torch.linalg.norm(q - c, dim=2) - r  # (N,K)
     ### End of your code ###
     return sphere_sdf
 
@@ -83,6 +87,13 @@ class SphereNet(nn.Module):
         sphere_params = self.decoder(features)
         
         ### Comment on the following 4 lines, why do we have to do it?###
+        # Map raw decoder outputs to a stable, task-appropriate range:
+        # 1) torch.sigmoid(...) bounds each predicted parameter to [0, 1], which
+        #    stabilizes training and keeps radii non-negative at init.
+        # 2) We then apply an affine remap:
+        #      centers: [0,1] -> [-0.5, 0.5] (keeps spheres near the scene)
+        #      radius : [0,1] -> [0.1, 0.5] (avoids degenerate tiny/negative radii)
+        #    This yields sane initial geometry and prevents exploding values.
         sphere_params = torch.sigmoid(sphere_params.view(-1, 4))
         sphere_adder = torch.tensor([-0.5, -0.5, -0.5, 0.1]).to(sphere_params.device)
         sphere_multiplier = torch.tensor([1.0, 1.0, 1.0, 0.4]).to(sphere_params.device)
@@ -154,9 +165,8 @@ def main():
 
         ### Your code here ###
         ### Determine the loss function to train the model, i.e. the mean squared error between gt sdf field and predicted sdf field. ###
-        ### Bonus: Design additional losses that helps to achieve a better result. ###
-        mseloss = 0
-
+        loss_fn = torch.nn.MSELoss()
+        mseloss = loss_fn(sphere_sdf.squeeze(), values.squeeze())
         ### End of your code ###
 
         loss = mseloss

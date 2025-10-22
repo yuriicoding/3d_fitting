@@ -20,7 +20,12 @@ def determine_sphere_sdf(query_points, sphere_params):
     
     ### Your code here ###
     # Determine the SDF value of each query point with respect to each sphere, you may reuse the function from task 3 with modifications
-    sphere_sdf = torch.zeros(query_points.shape[0],1)
+    # Sphere SDF = distance from point to center - radius
+    center = sphere_params[:3]
+    radius = sphere_params[3]
+    # Compute Euclidean distance between query points and the sphere center
+    distances = torch.norm(query_points - center, dim=1, keepdim=True)
+    sphere_sdf = distances - radius
     ### End of your code ###
 
     return sphere_sdf
@@ -39,7 +44,18 @@ def determine_box_sdf(query_points, box_params):
     # TODO: Implement box SDF calculation
     # Hint: Transform points to box local space, then calculate distance to axis-aligned box
     # Use half-extents to determine the box boundaries
-    box_sdf = torch.zeros(query_points.shape[0],1)
+    # Split parameters
+    center = box_params[:3]
+    half_extents = box_params[3:]
+    # Move points into the box's local coordinate system
+    local_points = query_points - center
+    # Compute signed distance using axis-aligned box formula
+    q = torch.abs(local_points) - half_extents
+    # Outside distance (positive part)
+    outside_dist = torch.norm(torch.clamp(q, min=0.0), dim=1, keepdim=True)
+    # Inside distance (negative part)
+    inside_dist = torch.clamp(torch.max(q, dim=1, keepdim=True).values, max=0.0)
+    box_sdf = outside_dist + inside_dist
     ### End of your code ###
 
     return box_sdf
@@ -60,7 +76,17 @@ def determine_torus_sdf(query_points, torus_params):
     # Hint: Project points to xz-plane for major radius, then calculate distance to torus
     # Major radius is the distance from center to the ring center
     # Minor radius is the thickness of the ring
-    torus_sdf = torch.zeros(query_points.shape[0],1)
+    # Torus parameters
+    center = torus_params[:3]
+    R = torus_params[3]   # major radius
+    r = torus_params[4]   # minor radius
+
+    # Transform points to torus local space
+    p = query_points - center
+    # Project points to XZ-plane for major radius
+    q = torch.stack([torch.norm(p[:, [0, 2]], dim=1) - R, p[:, 1]], dim=1)
+    # Compute distance to the torus surface
+    torus_sdf = torch.norm(q, dim=1, keepdim=True) - r
     ### End of your code ###
     return torus_sdf
 
@@ -77,7 +103,7 @@ def csg_union(sdf1, sdf2):
     """
     ### Your code here ###
     # TODO: Implement CSG union operation
-    union_sdf = torch.zeros_like(sdf1)
+    union_sdf = torch.minimum(sdf1, sdf2)
     ### End of your code ###
     return union_sdf
 
@@ -94,7 +120,7 @@ def csg_subtraction(sdf1, sdf2):
     """
     ### Your code here ###
     # TODO: Implement CSG subtraction operation
-    subtraction_sdf = torch.zeros_like(sdf1)
+    subtraction_sdf = torch.maximum(sdf1, -sdf2)
     ### End of your code ###
     return subtraction_sdf
 
@@ -178,9 +204,9 @@ def main():
     sdf_subtract_ac = csg_subtraction(sdf_a, sdf_c)
     
     # Implement the union of the union of A and B with C
-    sdf_union_abc = torch.zeros_like(sdf_a)
+    sdf_union_abc = torch.minimum(sdf_union_ab, sdf_c)
     # Implement the union of A and B subtracted by C
-    sdf_union_ab_subtract_c = torch.zeros_like(sdf_a)
+    sdf_union_ab_subtract_c = torch.maximum(sdf_union_ab, -sdf_c)
     
     # Create output directory
     output_dir = "./output"

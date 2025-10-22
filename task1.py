@@ -168,7 +168,7 @@ def visualize_registration(source, target0, target1):
     scene.show()
 
 
-def icp_point_to_point(source, target, max_iterations=100, tolerance=1e-10):
+def icp_point_to_point(source, target, max_iterations=100, tolerance=1e-4):
     """
     Point-to-Point ICP algorithm.
     Args:
