@@ -50,8 +50,6 @@ def visualize_registration_dynamic(
     def update_plot(i):
         ax.cla()  # Clear the previous plot
 
-
-
         # Plot the source point cloud (fixed reference)
         ax.scatter(
             source[:, 0],
@@ -62,7 +60,6 @@ def visualize_registration_dynamic(
             alpha=0.5,
         )
 
-        #old version
         # Apply the current transformation to the sphere
         transformed_sphere = (
             sphere_transforms[i][:3, :3] @ sphere.T
@@ -108,7 +105,8 @@ def visualize_registration_dynamic(
     # sphere_transforms = sphere.copy()
     # cylinder_transforms = cylinder.copy()
 
-    #MODIFICATION: use min_transforms instead of just sphere_transforms as otherwise the updateplot runs of out frames for cylinder
+    #MODIFICATION: use min_transforms instead of just sphere_transforms 
+    # as otherwise the updateplot runs of out frames for cylinder
     min_transforms = min(len(sphere_transforms), len(cylinder_transforms))
     for i in range(min_transforms):
         update_plot(i)
@@ -226,14 +224,10 @@ def icp_point_to_point(source, target, max_iterations=100, tolerance=1e-4):
         all_transforms.append(transformation_matrix)
         
         # Compute the error as the mean of the distances between the source and target points.
-        error = float(np.mean(distances ** 2))
+        error = float(np.mean(distances))
         if abs(prev_error - error) < tolerance:
             break
         prev_error = error
-
-    # target_len = max_iterations + 1  # include initial identity
-    # if len(all_transforms) < target_len:
-    #     all_transforms.extend([all_transforms[-1]] * (target_len - len(all_transforms)))
 
         ### END OF YOUR CODE ###
 
@@ -258,6 +252,7 @@ def main():
         
         transformed_sphere = np.dot(sphere_pc_homo, random_transformation_matrix)[:, :3]
         
+        # ###DEFAULT VERSION###
         # # Apply Point-to-Point ICP to register the sphere to the lollipop model
         # sphere_transformed_ptp, error_sphere_ptp, all_transforms_sphere = (
         #     icp_point_to_point(transformed_sphere, lollipop_pc)
@@ -267,28 +262,30 @@ def main():
         # cylinder_transformed_ptp, error_cylinder_ptp, all_transforms_cylinder = (
         #     icp_point_to_point(transformed_cylinder, lollipop_pc)
         # )
+        ###END OF DEFAULT VERSION###
 
-        # --- 1) Register the sphere to the full lollipop ---
+        ##BONUS VERSION###
+
+        #Register the sphere to the full lollipop
         sphere_transformed_ptp, error_sphere_ptp, all_transforms_sphere = (
             icp_point_to_point(transformed_sphere, lollipop_pc)
         )
-
-        # --- 2) Estimate candy center & radius from the aligned sphere ---
+        
+        #Estimate candy center & radius from the aligned sphere
         sphere_center = np.mean(sphere_transformed_ptp, axis=0)
-        # median radius is robust to partial sampling/noise
         sphere_radius = np.median(np.linalg.norm(sphere_transformed_ptp - sphere_center, axis=1))
 
-        # --- 3) Mask out *all* target points near the candy (keep only stick) ---
-        # pick a small margin relative to the sphere radius (tune 0.03–0.10)
+        #Mask out all target points near the candy (keep only stick)
         margin = 0.2 * sphere_radius
         dist_to_center = np.linalg.norm(lollipop_pc - sphere_center, axis=1)
         stick_mask = dist_to_center > (sphere_radius + margin)
         lollipop_stick = lollipop_pc[stick_mask]
 
-        # --- 4) Register the cylinder ONLY to stick points ---
+        #Register the cylinder ONLY to stick points
         cylinder_transformed_ptp, error_cylinder_ptp, all_transforms_cylinder = (
             icp_point_to_point(transformed_cylinder, lollipop_stick)
         )
+        ##END OF BONUS VERSION###
 
         # Print comparison of results
         print(f"Point-to-Point ICP Sphere registration error: {error_sphere_ptp}")

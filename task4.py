@@ -20,10 +20,8 @@ def determine_sphere_sdf(query_points, sphere_params):
     
     ### Your code here ###
     # Determine the SDF value of each query point with respect to each sphere, you may reuse the function from task 3 with modifications
-    # Sphere SDF = distance from point to center - radius
     center = sphere_params[:3]
     radius = sphere_params[3]
-    # Compute Euclidean distance between query points and the sphere center
     distances = torch.norm(query_points - center, dim=1, keepdim=True)
     sphere_sdf = distances - radius
     ### End of your code ###
@@ -43,17 +41,11 @@ def determine_box_sdf(query_points, box_params):
     ### Your code here ###
     # TODO: Implement box SDF calculation
     # Hint: Transform points to box local space, then calculate distance to axis-aligned box
-    # Use half-extents to determine the box boundaries
-    # Split parameters
     center = box_params[:3]
     half_extents = box_params[3:]
-    # Move points into the box's local coordinate system
     local_points = query_points - center
-    # Compute signed distance using axis-aligned box formula
-    q = torch.abs(local_points) - half_extents
-    # Outside distance (positive part)
+    q = local_points.abs() - half_extents
     outside_dist = torch.norm(torch.clamp(q, min=0.0), dim=1, keepdim=True)
-    # Inside distance (negative part)
     inside_dist = torch.clamp(torch.max(q, dim=1, keepdim=True).values, max=0.0)
     box_sdf = outside_dist + inside_dist
     ### End of your code ###
@@ -76,17 +68,13 @@ def determine_torus_sdf(query_points, torus_params):
     # Hint: Project points to xz-plane for major radius, then calculate distance to torus
     # Major radius is the distance from center to the ring center
     # Minor radius is the thickness of the ring
-    # Torus parameters
     center = torus_params[:3]
-    R = torus_params[3]   # major radius
-    r = torus_params[4]   # minor radius
+    big_R = torus_params[3]
+    small_R = torus_params[4]
 
-    # Transform points to torus local space
-    p = query_points - center
-    # Project points to XZ-plane for major radius
-    q = torch.stack([torch.norm(p[:, [0, 2]], dim=1) - R, p[:, 1]], dim=1)
-    # Compute distance to the torus surface
-    torus_sdf = torch.norm(q, dim=1, keepdim=True) - r
+    points = query_points - center
+    q = torch.stack([torch.norm(points[:, [0, 2]], dim=1) - big_R, points[:, 1]], dim=1)
+    torus_sdf = torch.norm(q, dim=1, keepdim=True) - small_R
     ### End of your code ###
     return torus_sdf
 
@@ -204,9 +192,9 @@ def main():
     sdf_subtract_ac = csg_subtraction(sdf_a, sdf_c)
     
     # Implement the union of the union of A and B with C
-    sdf_union_abc = torch.minimum(sdf_union_ab, sdf_c)
+    sdf_union_abc = csg_union(sdf_union_ab, sdf_c)
     # Implement the union of A and B subtracted by C
-    sdf_union_ab_subtract_c = torch.maximum(sdf_union_ab, -sdf_c)
+    sdf_union_ab_subtract_c = csg_subtraction(sdf_union_ab, sdf_c)
     
     # Create output directory
     output_dir = "./output"
@@ -220,6 +208,8 @@ def main():
         "A_union_B_union_C": sdf_union_abc,
         "A_union_B_subtract_C": sdf_union_ab_subtract_c,
     }
+    
+    #END OF BONUS
     
     for op_name, sdf_values in operations.items():
         mesh = extract_mesh_from_sdf(query_points, sdf_values, resolution=resolution)
@@ -239,9 +229,39 @@ def main():
         mesh_b.export(os.path.join(output_dir, "primitive_B.obj"))
     if mesh_c is not None:
         mesh_c.export(os.path.join(output_dir, "primitive_C.obj"))
-    
-    print("Task 4 completed. Results saved to ./output/")
 
+
+
+    #BONUS
+    ring_torus = torch.tensor([-1.00, 0.20, 0.0, 0.35, 0.12], dtype=torch.float32).to(device)
+    connector_box = torch.tensor([-0.55, 0.20, 0.0, 0.15, 0.12, 0.12], dtype=torch.float32).to(device)
+    shoulder_sphere = torch.tensor([-0.40, 0.20, 0.0, 0.22], dtype=torch.float32).to(device)
+    shaft_box = torch.tensor([-0.05, 0.20, 0.0, 0.80, 0.12, 0.12], dtype=torch.float32).to(device)
+    tooth1_box = torch.tensor([0.35, 0.05, 0.0, 0.08, 0.12, 0.12], dtype=torch.float32).to(device)
+    tooth2_box = torch.tensor([0.55, 0.12, 0.0, 0.08, 0.16, 0.12], dtype=torch.float32).to(device)
+    tooth3_box = torch.tensor([0.75, 0.00, 0.0, 0.06, 0.20, 0.12], dtype=torch.float32).to(device)
+    groove_box = torch.tensor([0.15, 0.32, 0.0, 0.20, 0.04, 0.10], dtype=torch.float32).to(device)
+
+    sdf_ring = determine_torus_sdf(query_points, ring_torus)
+    sdf_conn = determine_box_sdf(query_points, connector_box)
+    sdf_shoulder = determine_sphere_sdf(query_points, shoulder_sphere)
+    sdf_shaft = determine_box_sdf(query_points, shaft_box)
+    sdf_tooth1 = determine_box_sdf(query_points, tooth1_box)
+    sdf_tooth2 = determine_box_sdf(query_points, tooth2_box)
+    sdf_tooth3 = determine_box_sdf(query_points, tooth3_box)
+    sdf_groove = determine_box_sdf(query_points, groove_box)
+
+    key_step1 = csg_union(sdf_ring, sdf_conn)
+    key_step2 = csg_union(key_step1, sdf_shoulder)
+    key_step3 = csg_union(key_step2, sdf_shaft)
+    key_step4 = csg_subtraction(key_step3, sdf_tooth1)
+    key_step5 = csg_subtraction(key_step4, sdf_tooth2)
+    key_step6 = csg_subtraction(key_step5, sdf_tooth3)
+    key_final = csg_subtraction(key_step6, sdf_groove)
+
+    mesh = extract_mesh_from_sdf(query_points, key_final, resolution=resolution)
+    if mesh is not None:
+        mesh.export(os.path.join(output_dir, "KEY_FINAL.obj"))
 
 if __name__ == "__main__":
     main()

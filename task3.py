@@ -26,11 +26,11 @@ def determine_sphere_sdf(query_points, sphere_params):
 
     ### Your code here ###
     # Determine the SDF value of each query point with respect to each sphere ###
-    # query_points: (N,3); sphere_params: (K,4) as (cx,cy,cz,r)
-    q = query_points.unsqueeze(1)              # (N,1,3)
-    c = sphere_params[:, :3].unsqueeze(0)      # (1,K,3)
-    r = sphere_params[:, 3].unsqueeze(0)       # (1,K)
-    sphere_sdf = torch.linalg.norm(q - c, dim=2) - r  # (N,K)
+    points = query_points.unsqueeze(1)
+    center = sphere_params[:, :3]
+    radius = sphere_params[:, 3]
+    distance = torch.linalg.norm(points - center, dim=2)
+    sphere_sdf = distance - radius
     ### End of your code ###
     return sphere_sdf
 
@@ -87,13 +87,18 @@ class SphereNet(nn.Module):
         sphere_params = self.decoder(features)
         
         ### Comment on the following 4 lines, why do we have to do it?###
-        # Map raw decoder outputs to a stable, task-appropriate range:
-        # 1) torch.sigmoid(...) bounds each predicted parameter to [0, 1], which
-        #    stabilizes training and keeps radii non-negative at init.
-        # 2) We then apply an affine remap:
-        #      centers: [0,1] -> [-0.5, 0.5] (keeps spheres near the scene)
-        #      radius : [0,1] -> [0.1, 0.5] (avoids degenerate tiny/negative radii)
-        #    This yields sane initial geometry and prevents exploding values.
+
+        # Sigmoid compresses the raw decoder outputs into the range [0, 1], preventing extremely large or negative values. 
+        # This keeps training numerically stable and ensures the radius starts positive.
+        # Sphere multiplier and adder then remap those normalized values into meaningful ranges:
+        # Sphere centers → [-0.5, 0.5], so they stay near the object’s coordinate space.
+        # Sphere radii → [0.1, 0.5], ensuring every sphere is visible, positive, and not oversized.
+        #These transformations regularize the parameter space: they retsrict learning 
+        # to a plausible region, speed up convergence, and prevent exploding gradients.
+        #If they are removed, the decoder outputs become unbounded - sphere centers may drift far away, 
+        # radii may become negative or excessively large, 
+        # and hence the network might collapse or diverge because gradients through the SDF and bsmin become unstable.
+
         sphere_params = torch.sigmoid(sphere_params.view(-1, 4))
         sphere_adder = torch.tensor([-0.5, -0.5, -0.5, 0.1]).to(sphere_params.device)
         sphere_multiplier = torch.tensor([1.0, 1.0, 1.0, 0.4]).to(sphere_params.device)
@@ -145,8 +150,8 @@ def main():
         np.load(f"data/{name}.npz")["points"],
         np.load(f"data/{name}.npz")["values"],
     )
-    # device = "cuda" if torch.cuda.is_available() else "cpu"
-    device = "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # device = "cpu"
     points = torch.from_numpy(points).float().to(device)
     values = torch.from_numpy(values).float().to(device)
     surface_pointcloud = torch.from_numpy(pcd_model.vertices).float().to(device)
@@ -161,12 +166,24 @@ def main():
             surface_pointcloud.unsqueeze(0).transpose(2, 1), points
         )
         ### Explain why the following line is necessary and what does it do###
+        # Since each query point sphere_sdf has distances to many spheres, 
+        # we need the minimum distance to represent the union of spheres. 
+        # The function bsmin computes a smooth, differentiable version of the min, 
+        # so gradients can get to multiple spheres during training instead of just the closest one. 
+        # This makes learning stable and allows all spheres to adjust their positions and sizes together.
         sphere_sdf = bsmin(sphere_sdf, dim=-1).to(device)
 
         ### Your code here ###
         ### Determine the loss function to train the model, i.e. the mean squared error between gt sdf field and predicted sdf field. ###
         loss_fn = torch.nn.MSELoss()
         mseloss = loss_fn(sphere_sdf.squeeze(), values.squeeze())
+
+        #Bonus 
+        # Penalize small spheres (encourage r >= r_min)
+        # r = sphere_params[..., 3]
+        # r_min = 0.10
+        # small_sphere_penalty = torch.relu(r_min - r).mean()
+        # mseloss += 0.2 * small_sphere_penalty
         ### End of your code ###
 
         loss = mseloss

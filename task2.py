@@ -75,11 +75,7 @@ def sphere_residuals(params, points):
         center = np.array([x0, y0, z0])
 
         ### Your code here ###
-
-        # Vectorized distances from each point to the center
         dists = np.linalg.norm(points - center, axis=1)
-
-        # Residuals: how far each point is from the sphere surface
         residual = dists - r
         ### End of your code ###
         return residual
@@ -100,22 +96,18 @@ def sphere_jac(params, points):
     center = np.array([x0, y0, z0])
 
     ### Your code here ###
-    # Differences from center to each point (N x 3)
-    # = [x_i-x0, y_i-y0, z_i-z0]
-    diff = points - center  
-    dists = np.linalg.norm(diff, axis=1)
 
-    # Avoid division by zero for points exactly at the center
-    eps = 1e-12
-    safe_dists = np.maximum(dists, eps)
-
-    # Jacobian initialization
+    # Initialize the Jacobian matrix (Nx4)
     J = np.zeros((points.shape[0], 4))
 
+    diff = points - center  
+    dists = np.linalg.norm(diff, axis=1)
+    
+
     # Partials w.r.t center coordinates: -(diff / ||diff||)
-    J[:, 0] = -diff[:, 0] / safe_dists
-    J[:, 1] = -diff[:, 1] / safe_dists
-    J[:, 2] = -diff[:, 2] / safe_dists
+    J[:, 0] = -diff[:, 0] / dists
+    J[:, 1] = -diff[:, 1] / dists
+    J[:, 2] = -diff[:, 2] / dists
 
     # Partial w.r.t radius: -1
     J[:, 3] = -1.0
@@ -137,11 +129,7 @@ def fit_sphere(points):
         delta, *_ = np.linalg.lstsq(J, residual, None)
 
         # Update the parameters
-        x = x - delta
-
-        # Keep radius non-negative (robustness)
-        if x[3] < 0:
-            x[3] = 1e-12  
+        x = x - delta 
 
         ### End of your code ###
         
@@ -167,8 +155,10 @@ def cylinder_residuals(params, points):
         # h represents the height of the cylinder — how tall it is along its main axis.
         # a cylinder extends in a the direction of the axis and has a certain height h
         # points - np.array([x0, y0, z0]) gives the positions of all points relative to the cylinder’s base point (the starting point of the axis)
-        # np.dot(..., axis_normalized) projects each of those points onto the axis direction — so for each point, we get how far along the axis it lies
-        # np.ptp() means peak to peak (max - min). It tells us the total spread of those projected points — the distance between the lowest and highest points along the axis.
+        # np.dot(..., axis_normalized) projects each of those points onto the axis direction — 
+        # so for each point, we get how far along the axis it lies
+        # np.ptp() means peak to peak (max - min). It tells us the total spread of those projected points — 
+        # the distance between the lowest and highest points along the axis.
         # That’s exactly the height of the cylinder that best spans all the data points.
 
         h = np.ptp(np.dot(points - np.array([x0, y0, z0]), axis_normalized))
@@ -177,7 +167,6 @@ def cylinder_residuals(params, points):
         vectors = points - np.array([x0, y0, z0])
         scalar_proj = np.dot(vectors, axis_normalized)
         projection = (scalar_proj[:, None] * axis_normalized[None, :])
-        # projection = np.array([x0, y0, z0]) + np.outer(scalar_proj, axis_normalized)
         
         # Compute the distance of each point to the cylinder axis
         radial_vec = vectors - projection
@@ -188,7 +177,6 @@ def cylinder_residuals(params, points):
         dist_bottom_plane = -scalar_proj
         dist_top_plane = scalar_proj - h
         dist_to_height = np.maximum(0.0, np.maximum(dist_bottom_plane, dist_top_plane))
-        # dist_to_height = np.maximum(np.abs(scalar_proj) - 0.5*h, 0)
         
         # Compute the residuals: distance of each point to the cylinder surface
         # Take the absolute value of the point to axis or height RESIDUE, whichever is greater
@@ -201,78 +189,87 @@ def cylinder_residuals(params, points):
 
 
 def cylinder_jac(params, points):
-    """
-    Compute the Jacobian matrix for fitting points to a cylinder.
-
-    Args:
-        params (np.array): A 1x7 array [x0, y0, z0, dx, dy, dz, r].
-        points (np.array): Nx3 array of 3D points.
-
-    Returns:
-        np.array: Jacobian matrix (Nx7),
-                  partial derivatives of the residuals w.r.t [x0, y0, z0, dx, dy, dz, r].
-    """
 
     x0, y0, z0, dx, dy, dz, r = params
-    c = np.array([x0, y0, z0])
-    d = np.array([dx, dy, dz])
+    c = np.array([x0, y0, z0], dtype=float)
+    d = np.array([dx, dy, dz], dtype=float)
 
-    # Normalize axis direction (safely)
     d_norm = np.linalg.norm(d)
-    if d_norm < 1e-12:
-        d_norm = 1e-12
-    d = d / d_norm
+    u = d / d_norm
 
-    # Compute vectors from axis base point to each data point
-    v = points - c  # shape (N,3)
-
-    # Perpendicular component from axis to point
-    perp = v - proj  # shape (N,3)
+    v   = points - c
+    t   = v @ u
+    proj = t[:, None] * u[None, :]
+    perp = v - proj
     perp_len = np.linalg.norm(perp, axis=1)
-    safe_len = np.maximum(perp_len, 1e-12)
 
-    # Initialize Jacobian (N x 7)
-    J = np.zeros((points.shape[0], 7))
+    h = np.ptp(t)
 
-    # --- Derivatives with respect to (x0, y0, z0) ---
-    # Shifting the base point moves v -> v - dc, thus affects perp directly.
-    # ∂res/∂c = - (perp / ||perp||)
-    J[:, 0:3] = -perp / safe_len[:, None]
+    side_residual = perp_len - r
+    dist_bottom_plane = -t
+    dist_top_plane    =  t - h
+    dist_to_height    = np.maximum(0.0, np.maximum(dist_bottom_plane, dist_top_plane))
 
-    # --- Derivatives with respect to (dx, dy, dz) ---
-    # Axis direction affects projection: ∂proj/∂d = t_i * I - (v_i ⋅ d) * something
-    # Approximation: the direction change effect on perp ≈ -(v ⋅ d) component orthogonalized.
-    for j in range(3):
-        e_j = np.zeros(3)
-        e_j[j] = 1.0
-        # derivative of projection wrt axis direction
-        d_proj = np.outer(t, e_j) + np.outer(np.dot(v, e_j), d) * 0.0  # simplified form
-        # approximate partial: derivative of perp wrt d = -d_proj
-        d_perp = -np.outer(t, e_j)
-        # derivative of residual wrt d_j = (perp ⋅ d_perp) / ||perp||
-        J[:, 3 + j] = np.sum(perp * d_perp, axis=1) / safe_len
+    use_side = (np.abs(side_residual) >= dist_to_height)
+    N = points.shape[0]
+    J = np.zeros((N, 7), dtype=float)
 
-    # --- Derivative with respect to radius ---
-    J[:, 6] = -1.0
+    idx = use_side
+    sgn = np.sign(side_residual[idx])
+    J[idx, 0:3] = (-perp[idx] / perp_len[idx, None]) * sgn[:, None]
+    Ju = ( - (t[idx, None] * (perp[idx] / perp_len[idx, None])) ) * sgn[:, None]
+    J[idx, 3:6] = Ju / d_norm
+    J[idx, 6] = -sgn
+
+    jdx = ~use_side
+    bottom = jdx & (dist_bottom_plane >= dist_top_plane) & (dist_bottom_plane > 0)
+    J[bottom, 0:3] =  u[None, :]
+    J[bottom, 3:6] = -(perp[bottom] / d_norm)
+
+    top = jdx & (dist_top_plane >= dist_bottom_plane) & (dist_top_plane > 0)
+    J[top, 0:3] = -u[None, :]
+    J[top, 3:6] =  (perp[top] / d_norm)
 
     return J
 
 
+
+
+def fit_cylinder(points):
+
+    x = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.05], dtype=float)
+
+    for _ in range(1000):
+
+        r = cylinder_residuals(x, points)
+        J = cylinder_jac(x, points)
+
+        delta, *_ = np.linalg.lstsq(J, r, rcond=None)
+        x = x - delta
+
+        axis = x[3:6]
+        nrm = np.linalg.norm(axis)
+        x[3:6] = axis / nrm
+
+        if np.linalg.norm(delta) < 1e-4:
+            break
+
+    return x
+
      
     
-def fit_cylinder(points):
-    initial_guess = [0, 0, 0, 0, 0, 1, 0.05]
-    ### Bonus: Implement the Gauss-Newton optimization function to fit the cylinder parameters ###
-    result = least_squares(cylinder_residuals, initial_guess, args=(points,))
-    return result.x  # Estimated cylinder parameters
+# def fit_cylinder(points):
+#     initial_guess = [0, 0, 0, 0, 0, 1, 0.05]
+#     ### Bonus: Implement the Gauss-Newton optimization function to fit the cylinder parameters ###
+#     result = least_squares(cylinder_residuals, initial_guess, args=(points,))
+#     return result.x  # Estimated cylinder parameters
 
 
 
-def ransac_lollipop_fitting(points, max_iterations= 100, threshold=0.001):
+def ransac_lollipop_fitting(points, max_iterations= 100, threshold=0.01):
     best_sphere_params = None
     best_cylinder_params = None
     best_inliers_count = 0
-    best_cylinder_height = 0
 
     sphere_points = points
     
@@ -323,15 +320,18 @@ def ransac_lollipop_fitting(points, max_iterations= 100, threshold=0.001):
             best_cylinder_params = cylinder_params
 
             # Height from inlier axial spread
-            c = cylinder_params[:3]
-            a = cylinder_params[3:6]
-            a = a / (np.linalg.norm(a))
-            t_in = (points[exclusive_cylinder_inliers_mask] - c) @ a
-            best_cylinder_height = float(np.ptp(t_in)) if t_in.size else 0.0
-            if t_in.size:
-                t_min = float(np.min(t_in))
+            center = cylinder_params[:3]
+            axis = cylinder_params[3:6]
+            axis = axis / (np.linalg.norm(axis))
+            cylinder_inliers = (points[exclusive_cylinder_inliers_mask] - center) @ axis
+
+            if cylinder_inliers.size:
+                best_cylinder_height = float(np.ptp(cylinder_inliers))
+                t_min = float(np.min(cylinder_inliers))
                 mid_along_axis = t_min + 0.5 * best_cylinder_height
-                best_cylinder_params[:3] = c + mid_along_axis * a
+                best_cylinder_params[:3] = center + mid_along_axis * axis
+            else:
+                best_cylinder_height = 0.0
         
         # Update the sphere points to exclude the inliers to the cylinder
         sphere_points = points[dist_to_cyl > threshold]
